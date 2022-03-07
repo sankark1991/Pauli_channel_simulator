@@ -1,4 +1,5 @@
 import numpy as np
+from copy import copy
 
 class BaseParityCheck:
     """Rotated surface code with distance 5."""
@@ -89,7 +90,7 @@ class BaseParityCheck:
             - IR/IM/IMR/IC = idle
             - 0 = protected location (no noise)"""
         all_qubits = sorted(self.data + self.X_syns + self.Z_syns)
-        num_qubits = len(all_qubits)
+        self.num_qubits = len(all_qubits)
         self.qubit_inds = {i: all_qubits[i] for i in range(num_qubits)}
         self.circuit_array = np.zeros(11, num_qubits)
         for round_number in range(11):
@@ -110,11 +111,24 @@ class BaseParityCheck:
         """Given an error (l, P), simulates the parity-check circuit followed by a perfect parity-check circuit,
         and returns the syndrome difference history as a (3, 4, 2) array plus a (4, 3, 2) array (for the
         X-syndromes and Z-syndromes, respectively)."""
+        # TODO modify to handle having the error come before vs after
         pass
 
-    def error(self, l, P):
-        """Given an error (l, P), returns the net effect on the data qubits as a shape (5, 5) array."""
-        pass
+    def error(self, r, q, P):
+        """Given an error (r, q, P), returns the net effect on the data qubits as a shape (5, 5) array.
+        Here r is the round number and q is the qubit where the error occurs (control for a CNOT error)
+        Computed by propagating through the base parity check circuit in array form."""
+        # Generate the error state after round r.
+        pauli_binary = {'X': np.array([0, 1]), 'Z': np.array([1, 0]), 'Y': np.array([1, 1])}
+        error = np.zeros(self.num_qubits, 2)
+        if len(P) == 1:
+            error[self.qubit_inds[q]] = pauli_binary[P[0]]
+        elif len(P) == 2:
+            error[self.qubit_inds[q]] = pauli_binary[P[0]]
+            target = self.circuit_array[r, self.qubit_inds[q]] - 1000
+            error[target] = pauli_binary[P[1]]
+        # Propagate forwards until they get measured out in round 5
+        # TODO
 
     def edge_error_list(self, e1, e2):
         """Given vertices v1 = (x1, y1, t1) and v2 = (x2, y2, t2) with t1, t2 in {0, 1}, returns the set of
