@@ -91,8 +91,8 @@ class BaseParityCheck:
             - 0 = protected location (no noise)"""
         all_qubits = sorted(self.data + self.X_syns + self.Z_syns)
         self.num_qubits = len(all_qubits)
-        self.qubit_inds = {i: all_qubits[i] for i in range(num_qubits)}
-        self.circuit_array = np.zeros(11, num_qubits)
+        self.qubit_inds = {i: all_qubits[i] for i in range(self.num_qubits)}
+        self.circuit_array = np.zeros(11, self.num_qubits)
         for round_number in range(11):
             round = self.circuit[round_number]
             for op_type in round.keys():
@@ -107,30 +107,38 @@ class BaseParityCheck:
 
 
 
-    def syn_diff(self, l, P):
-        """Given an error (l, P), simulates the parity-check circuit followed by a perfect parity-check circuit,
+    def syn_diff(self, r, Q, P):
+        """Given an error (r, Q, P), where r is the round number, Q is the qubits, P is the Pauli error,
+        simulates the parity-check circuit followed by a perfect parity-check circuit,
         and returns the syndrome difference history as a (3, 4, 2) array plus a (4, 3, 2) array (for the
         X-syndromes and Z-syndromes, respectively)."""
-        # TODO modify to handle having the error come before vs after
+        # Generate the circuit
+        noisy_circuit = copy(self.circuit)
+        noisy_circuit.insert(r+1, {P[i]: Q[i] for i in range(len(Q))})
+        # Simulate circuit with your favorite simulator
+        # TODO
         pass
 
-    def error(self, r, q, P):
-        """Given an error (r, q, P), returns the net effect on the data qubits as a shape (5, 5) array.
+    def error(self, r, Q, P):
+        """Given an error (r, Q, P), where r is the round number, Q is the qubits, P is the Pauli error,
+        returns the net effect on the data qubits as a shape (5, 5) array.
         Here r is the round number and q is the qubit where the error occurs (control for a CNOT error)
         Computed by propagating through the base parity check circuit in array form."""
         # Generate the error state after round r.
         pauli_binary = {'X': np.array([0, 1]), 'Z': np.array([1, 0]), 'Y': np.array([1, 1])}
         error = np.zeros(self.num_qubits, 2)
-        if len(P) == 1:
-            error[self.qubit_inds[q]] = pauli_binary[P[0]]
-        elif len(P) == 2:
-            error[self.qubit_inds[q]] = pauli_binary[P[0]]
-            target = self.circuit_array[r, self.qubit_inds[q]] - 1000
-            error[target] = pauli_binary[P[1]]
+        for i in range(len(Q)):
+            error[self.qubit_inds[Q[i]]] = pauli_binary[P[i]]
+        # if len(P) == 1
+        #     error[self.qubit_inds[Q[0]]] = pauli_binary[P[0]]
+        # elif len(P) == 2:
+        #     error[self.qubit_inds[Q[0]]] = pauli_binary[P[0]]
+        #     target = self.circuit_array[r, self.qubit_inds[Q[0]]] - 1000
+        #     error[target] = pauli_binary[P[1]]
         # Propagate forwards until they get measured out in round 5
         # TODO
 
     def edge_error_list(self, e1, e2):
         """Given vertices v1 = (x1, y1, t1) and v2 = (x2, y2, t2) with t1, t2 in {0, 1}, returns the set of
-        faults (l, P) which trigger this edge."""
+        faults (r, Q, P) which trigger this edge."""
         pass
