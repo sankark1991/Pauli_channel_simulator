@@ -4,10 +4,27 @@ from copy import copy
 class BaseParityCheck:
     """Rotated surface code with distance 5."""
     def __init__(self):
-        """Gets and stores the full list of error locations/types (l, P).
-        Pre-computes and stores syn_diff(l, P) and error(l, P) for each one.
-        Then for each edge (v1, v2), stores the list of faults (l, P) which trigger that edge."""
-        pass
+        """
+        Generates the parity check circuits.
+        Gets and stores the full list of faults by type, round number, qubits, and Pauli.
+        Pre-computes and stores the error and syndrome difference for each one.
+        For each edge (v1, v2), stores the list of faults (l, P) which trigger that edge."""
+        self.get_parity_check_circuit()
+        self.get_parity_check_circuit_array_form()
+
+        self.get_all_fault_locations()
+
+        self.R_fault_effects = {fault: self.error_and_syn_diff(*fault) for fault in self.R_faults}
+        self.M_fault_effects = {fault: self.error_and_syn_diff(*fault) for fault in self.M_faults}
+        self.MR_fault_effects = {fault: self.error_and_syn_diff(*fault) for fault in self.MR_faults}
+        self.CNOT_1_fault_effects = {fault: self.error_and_syn_diff(*fault) for fault in self.CNOT_1_faults}
+        self.CNOT_2_fault_effects = {fault: self.error_and_syn_diff(*fault) for fault in self.CNOT_2_faults}
+        self.IR_fault_effects = {fault: self.error_and_syn_diff(*fault) for fault in self.IR_faults}
+        self.IM_fault_effects = {fault: self.error_and_syn_diff(*fault) for fault in self.IM_faults}
+        self.IMR_fault_effects = {fault: self.error_and_syn_diff(*fault) for fault in self.IMR_faults}
+        self.IC_fault_effects = {fault: self.error_and_syn_diff(*fault) for fault in self.IC_faults}
+
+        # TODO edge counts
 
     def get_parity_check_circuit(self):
         """Encodes the parity check circuit, and also stores the list of error locations/types (l, P).
@@ -89,54 +106,121 @@ class BaseParityCheck:
             - 2000 + n = target of CNOT with control n
             - IR/IM/IMR/IC = idle
             - 0 = protected location (no noise)"""
-        all_qubits = sorted(self.data + self.X_syns + self.Z_syns)
+        all_qubits = self.data + self.X_syns + self.Z_syns
         self.num_qubits = len(all_qubits)
-        self.qubit_inds = {i: all_qubits[i] for i in range(self.num_qubits)}
+        # Create a lookup array, shifted by 1 to make later operations faster
+        min_x, max_x = min(q[0] for q in all_qubits), max(q[0] for q in all_qubits)
+        min_y, max_y = min(q[1] for q in all_qubits), max(q[1] for q in all_qubits)
+        self.qubit_ind_array = np.array([[None for i in range(max_y - min_y)]
+                                         for j in range(max_x - min_x)])
+        for q in all_qubits:
+            self.qubit_ind_array[q[0] + 1, q[1] + 1] = all_qubits.index(q)
+
         self.circuit_array = np.zeros(11, self.num_qubits)
         for round_number in range(11):
             round = self.circuit[round_number]
             for op_type in round.keys():
                 if any(op_type == ft for ft in ('MX', 'MZ', 'RX', 'RZ', 'MRX', 'MRZ', 'IR', 'IM', 'IMR', 'IC')):
                     for v in round[op_type]:
-                        self.circuit_array[round_number, self.qubit_inds[v]] = op_type
+                        self.circuit_array[round_number, self.qubit_ind_array[v]] = op_type
                 elif op_type == 'CNOT':
                     for g in round['CNOT']:
-                        self.circuit_array[round_number, self.qubit_inds[g[0]]] = 1000 + self.qubit_inds[g[1]]
-                        self.circuit_array[round_number, self.qubit_inds[g[1]]] = 2000 + self.qubit_inds[g[0]]
+                        self.circuit_array[round_number, self.qubit_ind_array[g[0]]] = 1000 + self.qubit_ind_array[g[1]]
+                        self.circuit_array[round_number, self.qubit_ind_array[g[1]]] = 2000 + self.qubit_ind_array[g[0]]
         return None
 
+    def get_all_fault_locations(self):
+        """Gets all fault locations"""
+        # R: Pauli after a preparation operation
+        # M, MR: Pauli before a measurement operations
+        # CNOT: 2-Pauli after a CNOT gate. Two possible dists to draw from
+        # IR, IM, IC: Pauli after an idling operation
+        self.R_faults = []
+        self.M_faults = []
+        self.MR_faults = []
+        self.CNOT_1_faults = []
+        self.CNOT_2_faults = []
+        self.IR_faults = []
+        self.IM_faults = []
+        self.IMR_faults = []
+        self.IC_faults = []
+        for round_num in range(6):
+            round = self.circuit[round_num]
+            for q in round['RX']:
+                self.R_faults.extend([(round_num, [q], [P]) for P in ['Z', 'Y']])
+            for q in round['RZ']:
+                self.R_faults.extend([(round_num, [q], [P]) for P in ['X', 'Y']])
+            for q in round['MX']:
+                self.M_faults.extend([(round_num - 1, [q], [P]) for P in ['Z', 'Y']])
+            for q in round['MZ']:
+                self.M_faults.extend([(round_num - 1, [q], [P]) for P in ['X', 'Y']])
+            for q in round['MRX']:
+                self.MR_faults.extend([(round_num - 1, [q], [P]) for P in ['Z', 'Y']])
+            for q in round['MRZ']:
+                self.M_faults.extend([(round_num - 1, [q], [P]) for P in ['X', 'Y']])
+            for q in round['IR']:
+                self.IR_faults.extend([(round_num, [q], [P]) for P in ['Z', 'X', 'Y']])
+            for q in round['IM']:
+                self.IM_faults.extend([(round_num, [q], [P]) for P in ['Z', 'X', 'Y']])
+            for q in round['IMR']:
+                self.IMR_faults.extend([(round_num, [q], [P]) for P in ['Z', 'X', 'Y']])
+            for q in round['IC']:
+                self.IC_faults.extend([(round_num, [q], [P]) for P in ['Z', 'X', 'Y']])
+            for Q in round['CNOT']:
+                self.CNOT_1_faults.extend([[(round_num, [Q[i]], [P]) for P in ['Z', 'X', 'Y'] for i in range(2)]])
+                self.CNOT_2_faults.extend([(round_num, Q, [P_1, P_2])
+                                           for P_1 in ['I', 'Z', 'X', 'Y']
+                                           for P_2 in ['I', 'Z', 'X', 'Y'] if not(P_1 == 'I' and P_2 == 'I')])
 
-
-    def syn_diff(self, r, Q, P):
-        """Given an error (r, Q, P), where r is the round number, Q is the qubits, P is the Pauli error,
-        simulates the parity-check circuit followed by a perfect parity-check circuit,
-        and returns the syndrome difference history as a (3, 4, 2) array plus a (4, 3, 2) array (for the
-        X-syndromes and Z-syndromes, respectively)."""
-        # Generate the circuit
-        noisy_circuit = copy(self.circuit)
-        noisy_circuit.insert(r+1, {P[i]: Q[i] for i in range(len(Q))})
-        # Simulate circuit with your favorite simulator
-        # TODO
-        pass
-
-    def error(self, r, Q, P):
-        """Given an error (r, Q, P), where r is the round number, Q is the qubits, P is the Pauli error,
-        returns the net effect on the data qubits as a shape (5, 5) array.
-        Here r is the round number and q is the qubit where the error occurs (control for a CNOT error)
+    def error_and_syn_diff(self, r, Q, P):
+        """Given an error (r, Q, P), where r is the round number, Q is the qubits afflicted, , P is the Pauli error,
+        returns the net effect on the data qubits and the syndrome diff history.
         Computed by propagating through the base parity check circuit in array form."""
         # Generate the error state after round r.
         pauli_binary = {'X': np.array([0, 1]), 'Z': np.array([1, 0]), 'Y': np.array([1, 1])}
         error = np.zeros(self.num_qubits, 2)
         for i in range(len(Q)):
             error[self.qubit_inds[Q[i]]] = pauli_binary[P[i]]
-        # if len(P) == 1
-        #     error[self.qubit_inds[Q[0]]] = pauli_binary[P[0]]
-        # elif len(P) == 2:
-        #     error[self.qubit_inds[Q[0]]] = pauli_binary[P[0]]
-        #     target = self.circuit_array[r, self.qubit_inds[Q[0]]] - 1000
-        #     error[target] = pauli_binary[P[1]]
-        # Propagate forwards until they get measured out in round 5
-        # TODO
+            syn = np.zeros(2, self.num_qubits)
+        # Propagate forward until they get measured out
+        after_round = r
+        while any(not np.all_close(error[i], np.zeros(2)) for i in self.X_syns + self.Z_syns):
+            # While there are still errors on any syndrome indices, propagate forward
+            after_round += 1
+            qubits_to_handle = [i for i in range(self.num_qubits)]
+            while len(qubits_to_handle) > 0:
+                i = qubits_to_handle[0]
+                # Figure out what gate qubit i is involved in.
+                if 1000 <= self.circuit_array[after_round, i] < 2000:
+                    # CNOT gate from i to j
+                    j = self.circuit_array[after_round, i] - 1000
+                    error[i] = error[i] + error[j, 0] * np.array([1, 0])
+                    error[j] = error[j] + error[i, 1] * np.array([0, 1])
+                    qubits_to_handle.remove(j)
+                elif self.circuit_array[after_round, i] >= 2000:
+                    # CNOT gate from j to i
+                    j = self.circuit_array[after_round, i] - 2000
+                    error[j] = error[j] + error[i, 0] * np.array([1, 0])
+                    error[i] = error[i] + error[j, 1] * np.array([0, 1])
+                    qubits_to_handle.remove(j)
+                elif self.circuit_array[after_round, i] == 'MX' or self.circuit_array[after_round, i] == 'MRX':
+                    # Measure X
+                    if r < 5:
+                        syn[0, i] = error[i, 0]  # If Z or Y, flips measurement outcome in first syndrome round
+                    elif r >= 5:
+                        syn[1, i] = error[i, 0]  # If Z or Y, flips measurement outcome in second syndrome round
+                    error[i] = np.array([0, 0])
+                elif self.circuit_array[after_round, i] == 'MZ' or self.circuit_array[after_round, i] == 'MRZ':
+                    # Measure Z
+                    if r < 5:
+                        syn[0, i] = error[i, 1]  # If X or Y, flips measurement outcome in first syndrome round
+                    elif r >= 5:
+                        syn[1, i] = error[i, 1]  # If X or Y, flips measurement outcome in second syndrome round
+                    error[i] = np.array([0, 0])
+                qubits_to_handle.remove(i)
+        syn_diff = np.stack((syn[0], np.mod(syn[1] + syn[0], 2)))
+
+        return error, syn_diff
 
     def edge_error_list(self, e1, e2):
         """Given vertices v1 = (x1, y1, t1) and v2 = (x2, y2, t2) with t1, t2 in {0, 1}, returns the set of
